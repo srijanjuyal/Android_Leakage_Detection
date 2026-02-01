@@ -8,7 +8,7 @@ public class TestIRGeneration {
 
         // CHANGE THESE PATHS
         String androidPlatforms = "C:/Android/platforms";
-        String apkPath = "E:/college/BEIT/android-privacy-taint/src/main/resources/minecraft-1-20-1.apk";
+        String apkPath = "E:/college/BEIT/android-privacy-taint/src/main/resources/paytm.apk";
 
         System.out.println("[+] Initializing Soot...");
         SootSetup.init(androidPlatforms, apkPath);
