@@ -4,20 +4,21 @@ import java.util.List;
 
 public class MethodIR {
 
-    private final String methodSignature;
+    // signature is methodSignature
+    private final String signature;
     private final List<Statement> statements;
     private final CFG cfg;
 
-    public MethodIR(String methodSignature,
+    public MethodIR(String signature,
                     List<Statement> statements,
                     CFG cfg) {
-        this.methodSignature = methodSignature;
+        this.signature = signature;
         this.statements = statements;
         this.cfg = cfg;
     }
 
-    public String getMethodSignature() {
-        return methodSignature;
+    public String getSignature() {
+        return signature;
     }
 
     public List<Statement> getStatements() {

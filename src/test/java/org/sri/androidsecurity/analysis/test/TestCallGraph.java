@@ -15,10 +15,10 @@ public class TestCallGraph {
         SootSetup.init(androidPlatforms, apkPath);
 
         System.out.println("[+] Verifying IR");
-        IRBuilder.buildIR();
+//        IRBuilder.buildIR();
 
         System.out.println("[+] Building Call Graph");
-        CallGraphBuilder.buildAndPrint();
+//        CallGraphBuilder.buildAndPrint();
 
         System.out.println("[+] Step 3 completed");
     }

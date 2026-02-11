@@ -1,61 +1,197 @@
 package org.sri.androidsecurity.analysis.taint;
 
-import soot.*;
-import soot.jimple.InvokeExpr;
-import soot.jimple.Stmt;
-import soot.jimple.toolkits.callgraph.CallGraph;
-import soot.jimple.toolkits.callgraph.Edge;
+import org.sri.androidsecurity.analysis.callgraph.CallGraphModel;
+import org.sri.androidsecurity.analysis.ir.MethodIR;
+import org.sri.androidsecurity.analysis.ir.ProgramModel;
+import org.sri.androidsecurity.analysis.ir.Statement;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 public class InterProceduralAnalyzer {
 
-    private static final Map<SootMethod, MethodTaintSummary> summaries = new HashMap<>();
+    // Method signature → summary
+    private final Map<String, MethodTaintSummary> summaries = new HashMap<>();
 
-    public static void analyzeProgram() {
+    public void analyzeProgram(
+            ProgramModel programModel, CallGraphModel callGraphModel, Set<String> entryPoints) {
 
-        CallGraph cg = Scene.v().getCallGraph();
+        System.out.println("[+] Entry points: " + entryPoints.size());
 
+        for (String entry : entryPoints) {
+
+            if (!methodExists(entry, programModel)) {
+                continue;
+            }
+
+            propagateFrom(entry, programModel, callGraphModel);
+        }
+        System.out.println("\n===== Tainted Methods =====");
+
+        for (var entry : summaries.entrySet()) {
+            if (entry.getValue().returnsTainted) {
+                System.out.println("[TAINTED RETURN] " + entry.getKey());
+            }
+        }
+    }
+
+    // ============================================================
+    // Core propagation from a single Android lifecycle entry
+    // ============================================================
+
+    private void propagateFrom(
+            String entrySig,
+            ProgramModel programModel,
+            CallGraphModel callGraphModel) {
         boolean changed;
 
         do {
             changed = false;
 
-            for (SootClass sc : Scene.v().getApplicationClasses()) {
-                for (SootMethod m : sc.getMethods()) {
+            for (MethodIR method : programModel.getMethods()) {
 
-                    if (!m.isConcrete()) continue;
+                String methodSig = method.getSignature();
 
-                    MethodTaintSummary summary =
-                            summaries.computeIfAbsent(m, MethodTaintSummary::new);
+                if (!isReachable(entrySig, methodSig, callGraphModel))
+                    continue;
 
-                    Body body = m.retrieveActiveBody();
+                MethodTaintSummary summary =
+                        summaries.computeIfAbsent(
+                                methodSig,
+                                MethodTaintSummary::new
+                        );
 
-                    for (Unit u : body.getUnits()) {
-                        Stmt stmt = (Stmt) u;
+                // Analyze this method intra-procedurally first
+                boolean intraChanged =
+                        analyzeMethod(method, summary);
 
-                        if (!stmt.containsInvokeExpr()) continue;
+                if (intraChanged) {
+                    changed = true;
+                }
 
-                        InvokeExpr ie = stmt.getInvokeExpr();
-                        SootMethod callee = ie.getMethod();
+                // Propagate taint inter-procedurally
+                Set<String> callees =
+                        callGraphModel.getCallees(methodSig);
 
-                        MethodTaintSummary calleeSummary =
-                                summaries.get(callee);
+                for (String calleeSig : callees) {
 
-                        if (calleeSummary == null) continue;
+                    MethodTaintSummary calleeSummary =
+                            summaries.get(calleeSig);
 
-                        // Propagate return taint
-                        if (calleeSummary.returnsTainted &&
-                                stmt instanceof soot.jimple.AssignStmt as &&
-                                as.getLeftOp() instanceof Local l) {
+                    if (calleeSummary == null) continue;
 
-                            summary.returnsTainted = true;
-                            changed = true;
-                        }
+                    // If callee returns tainted → caller returns tainted
+                    if (calleeSummary.returnsTainted
+                            && !summary.returnsTainted) {
+
+                        summary.returnsTainted = true;
+                        changed = true;
                     }
                 }
             }
         } while (changed);
+    }
+
+    /**
+     * Intra-procedural analysis of a single method.
+     */
+    private boolean analyzeMethod(
+            MethodIR method,
+            MethodTaintSummary summary) {
+
+        TaintState state = new TaintState();
+        boolean changed;
+
+        do {
+            changed = false;
+
+            for (Statement stmt : method.getStatements()) {
+
+                // Create a copy to detect real changes
+                TaintState before = state.copy();
+
+                TaintTransfer.apply(stmt, state, state);
+
+                if (!before.getTaintedLocals()
+                        .equals(state.getTaintedLocals())) {
+
+                    changed = true;
+                }
+
+                // Handle return taint
+                if (stmt.isReturnStatement()) {
+                    var ret = stmt.getReturnedLocal();
+
+                    if (ret != null
+                            && state.isTainted(ret)
+                            && !summary.returnsTainted) {
+
+                        summary.returnsTainted = true;
+                        changed = true;
+                    }
+                }
+            }
+
+        } while (changed);
+
+        return summary.returnsTainted;
+    }
+
+    // ============================================================
+    // Reachability from entry using DFS on CallGraphModel
+    // ============================================================
+
+    private boolean isReachable(
+            String entry,
+            String target,
+            CallGraphModel cg) {
+
+        if (entry.equals(target))
+            return true;
+
+        Set<String> visited = new HashSet<>();
+        return dfs(entry, target, cg, visited);
+    }
+
+    private boolean dfs(
+            String current,
+            String target,
+            CallGraphModel cg,
+            Set<String> visited) {
+
+        if (current.equals(target))
+            return true;
+
+        if (!visited.add(current))
+            return false;
+
+        for (String callee : cg.getCallees(current)) {
+
+            if (dfs(callee, target, cg, visited))
+                return true;
+        }
+
+        return false;
+    }
+
+    // ============================================================
+    // Utility
+    // ============================================================
+
+    private boolean methodExists(
+            String signature,
+            ProgramModel programModel) {
+
+        for (MethodIR m : programModel.getMethods()) {
+            if (m.getSignature().equals(signature))
+                return true;
+        }
+        return false;
+    }
+
+    public Map<String, MethodTaintSummary> getSummaries() {
+        return summaries;
     }
 }

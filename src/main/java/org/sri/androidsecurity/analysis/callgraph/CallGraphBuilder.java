@@ -1,34 +1,40 @@
 package org.sri.androidsecurity.analysis.callgraph;
 
-import soot.*;
-import soot.jimple.toolkits.callgraph.*;
+import soot.Scene;
+import soot.SootClass;
+import soot.SootMethod;
+import soot.jimple.toolkits.callgraph.CallGraph;
+import soot.jimple.toolkits.callgraph.Edge;
+
+import java.util.Iterator;
 
 public class CallGraphBuilder {
 
-    public static void buildAndPrint() {
+    public static CallGraphModel buildCallGraphModel() {
 
-        CallGraph cg = Scene.v().getCallGraph();
+        CallGraphModel model = new CallGraphModel();
 
-        if (cg == null) {
-            throw new IllegalStateException("Call graph not initialized");
-        }
+        CallGraph sootCG = Scene.v().getCallGraph();
 
-        System.out.println("\n===== CALL GRAPH EDGES =====");
+        Iterator<Edge> it = sootCG.iterator();
 
-        for (Edge edge : cg) {
+        while (it.hasNext()) {
+
+            Edge edge = it.next();
 
             SootMethod src = edge.src();
             SootMethod tgt = edge.tgt();
 
-            // Filter out framework noise (important)
-            if (!src.getDeclaringClass().isApplicationClass()
-                    || !tgt.getDeclaringClass().isApplicationClass()) {
-                continue;
-            }
+            // Only consider application-to-application calls
+            if (!src.getDeclaringClass().isApplicationClass()) continue;
+            if (!tgt.getDeclaringClass().isApplicationClass()) continue;
 
-            System.out.println(
-                    src.getSignature() + "  -->  " + tgt.getSignature()
-            );
+            String callerSig = src.getSignature();
+            String calleeSig = tgt.getSignature();
+
+            model.addEdge(callerSig, calleeSig);
         }
+
+        return model;
     }
 }

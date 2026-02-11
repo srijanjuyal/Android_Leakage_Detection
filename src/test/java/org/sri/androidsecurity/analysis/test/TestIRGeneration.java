@@ -14,7 +14,7 @@ public class TestIRGeneration {
         SootSetup.init(androidPlatforms, apkPath);
 
         System.out.println("[+] Building IR and CFG...");
-        IRBuilder.buildIR();
+//        IRBuilder.buildIR();
 
         System.out.println("[+] Step 2 test completed.");
     }

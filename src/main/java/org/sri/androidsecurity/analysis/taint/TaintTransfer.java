@@ -1,5 +1,6 @@
 package org.sri.androidsecurity.analysis.taint;
 
+import org.sri.androidsecurity.analysis.ir.Statement;
 import org.sri.androidsecurity.analysis.rules.SourceSinkManager;
 import soot.Local;
 import soot.Value;
@@ -7,12 +8,13 @@ import soot.jimple.*;
 
 public class TaintTransfer {
 
-    public static boolean apply(Stmt stmt, TaintState in, TaintState out) {
+    public static boolean apply(Statement stmt, TaintState in, TaintState out) {
 
         boolean changed = false;
+        var sootStmt = stmt.getSootStmt();
 
         // Assignment: x = y
-        if (stmt instanceof AssignStmt as) {
+        if (sootStmt instanceof AssignStmt as) {
 
             Value left = as.getLeftOp();
             Value right = as.getRightOp();
@@ -25,7 +27,7 @@ public class TaintTransfer {
             }
 
             // SOURCE: x = source()
-            if (SourceSinkManager.isSource(stmt) && left instanceof Local l) {
+            if (SourceSinkManager.isSource(sootStmt) && left instanceof Local l) {
                 if (!out.isTainted(l)) {
                     out.taint(l);
                     changed = true;
@@ -34,11 +36,11 @@ public class TaintTransfer {
         }
 
         // Method invocation
-        if (stmt.containsInvokeExpr()) {
-            InvokeExpr ie = stmt.getInvokeExpr();
+        if (sootStmt.containsInvokeExpr()) {
+            InvokeExpr ie = sootStmt.getInvokeExpr();
 
             // SINK detection
-            if (SourceSinkManager.isSink(stmt)) {
+            if (SourceSinkManager.isSink(sootStmt)) {
                 for (Value arg : ie.getArgs()) {
                     if (arg instanceof Local l && in.isTainted(l)) {
                         System.out.println("🔥 LEAK DETECTED at: " + stmt);
