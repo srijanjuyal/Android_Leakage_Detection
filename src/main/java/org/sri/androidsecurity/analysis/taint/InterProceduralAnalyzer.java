@@ -12,22 +12,24 @@ import java.util.Set;
 
 public class InterProceduralAnalyzer {
 
-    // Method signature → summary
     private final Map<String, MethodTaintSummary> summaries = new HashMap<>();
 
     public void analyzeProgram(
-            ProgramModel programModel, CallGraphModel callGraphModel, Set<String> entryPoints) {
+            ProgramModel programModel,
+            CallGraphModel callGraphModel,
+            Set<String> entryPoints) {
+
+        // IMPORTANT (Missing in your code)
+        InterProceduralContext.summaries = summaries;
 
         System.out.println("[+] Entry points: " + entryPoints.size());
 
         for (String entry : entryPoints) {
-
-            if (!methodExists(entry, programModel)) {
-                continue;
-            }
+            if (!methodExists(entry, programModel)) continue;
 
             propagateFrom(entry, programModel, callGraphModel);
         }
+
         System.out.println("\n===== Tainted Methods =====");
 
         for (var entry : summaries.entrySet()) {
@@ -38,17 +40,24 @@ public class InterProceduralAnalyzer {
     }
 
     // ============================================================
-    // Core propagation from a single Android lifecycle entry
-    // ============================================================
 
     private void propagateFrom(
             String entrySig,
             ProgramModel programModel,
             CallGraphModel callGraphModel) {
+
         boolean changed;
+        int iteration = 0;
+        int maxIterations = 100;
 
         do {
             changed = false;
+            iteration++;
+
+            if (iteration > maxIterations) {
+                System.out.println("⚠️ Max iteration reached, stopping analysis");
+                break;
+            }
 
             for (MethodIR method : programModel.getMethods()) {
 
@@ -58,76 +67,19 @@ public class InterProceduralAnalyzer {
                     continue;
 
                 MethodTaintSummary summary =
-                        summaries.computeIfAbsent(
-                                methodSig,
-                                MethodTaintSummary::new
-                        );
+                        summaries.computeIfAbsent(methodSig, MethodTaintSummary::new);
 
-                // Analyze this method intra-procedurally first
-                boolean intraChanged =
-                        analyzeMethod(method, summary);
+                boolean intraChanged = analyzeMethod(method, summary);
 
-                if (intraChanged) {
-                    changed = true;
-                }
+                if (intraChanged) changed = true;
 
-                // Propagate taint inter-procedurally
-                Set<String> callees =
-                        callGraphModel.getCallees(methodSig);
+                // Interprocedural propagation
+                for (String calleeSig : callGraphModel.getCallees(methodSig)) {
 
-                for (String calleeSig : callees) {
-
-                    MethodTaintSummary calleeSummary =
-                            summaries.get(calleeSig);
-
+                    MethodTaintSummary calleeSummary = summaries.get(calleeSig);
                     if (calleeSummary == null) continue;
 
-                    // If callee returns tainted → caller returns tainted
-                    if (calleeSummary.returnsTainted
-                            && !summary.returnsTainted) {
-
-                        summary.returnsTainted = true;
-                        changed = true;
-                    }
-                }
-            }
-        } while (changed);
-    }
-
-    /**
-     * Intra-procedural analysis of a single method.
-     */
-    private boolean analyzeMethod(
-            MethodIR method,
-            MethodTaintSummary summary) {
-
-        TaintState state = new TaintState();
-        boolean changed;
-
-        do {
-            changed = false;
-
-            for (Statement stmt : method.getStatements()) {
-
-                // Create a copy to detect real changes
-                TaintState before = state.copy();
-
-                TaintTransfer.apply(stmt, state, state);
-
-                if (!before.getTaintedLocals()
-                        .equals(state.getTaintedLocals())) {
-
-                    changed = true;
-                }
-
-                // Handle return taint
-                if (stmt.isReturnStatement()) {
-                    var ret = stmt.getReturnedLocal();
-
-                    if (ret != null
-                            && state.isTainted(ret)
-                            && !summary.returnsTainted) {
-
+                    if (calleeSummary.returnsTainted && !summary.returnsTainted) {
                         summary.returnsTainted = true;
                         changed = true;
                     }
@@ -135,12 +87,115 @@ public class InterProceduralAnalyzer {
             }
 
         } while (changed);
-
-        return summary.returnsTainted;
     }
 
     // ============================================================
-    // Reachability from entry using DFS on CallGraphModel
+
+    private boolean analyzeMethod(
+        MethodIR method,
+        MethodTaintSummary summary) {
+
+    TaintState state = new TaintState();
+    boolean changed;
+
+    do {
+        changed = false;
+
+        for (Statement stmtWrapper : method.getStatements()) {
+
+            var stmt = stmtWrapper.getSootStmt(); // 🔥 KEY FIX
+
+            TaintState newState = state.copy();
+
+            // ==========================================
+            // 1. NORMAL TAINT PROPAGATION
+            // ==========================================
+            TaintTransfer.apply(stmtWrapper, state, newState);
+
+            // ==========================================
+            // 2. SOURCE DETECTION
+            // ==========================================
+            if (stmt.containsInvokeExpr()) {
+
+                var invoke = stmt.getInvokeExpr();
+                var methodSig = invoke.getMethod().getSignature();
+
+                if (org.sri.androidsecurity.analysis.rules.SourceSpec
+                        .isSourceMethod(invoke.getMethod())) {
+
+                    // Get assigned variable (LHS)
+                    if (stmt instanceof soot.jimple.AssignStmt assign) {
+
+                        if (assign.getLeftOp() instanceof soot.Local left) {
+
+                            newState.taint(left);
+
+                            System.out.println("\n======================");
+                            System.out.println("[SOURCE DETECTED]");
+                            System.out.println("Method: " + method.getSignature());
+                            System.out.println("Variable: " + left);
+                            System.out.println("======================");
+                        }
+                    }
+                }
+            }
+
+            // ==========================================
+            // 3. SINK + LEAK DETECTION
+            // ==========================================
+            if (stmt.containsInvokeExpr()) {
+
+                var invoke = stmt.getInvokeExpr();
+                var methodSig = invoke.getMethod().getSignature();
+
+                if (org.sri.androidsecurity.analysis.rules.SinkSpec
+                        .isSinkMethod(invoke.getMethod())) {
+
+                    for (var arg : invoke.getArgs()) {
+
+                        if (arg instanceof soot.Local local &&
+                                state.isTainted(local)) {
+
+                            System.out.println("\n======================");
+                            System.out.println("🔥 [LEAK DETECTED]");
+                            System.out.println("Method: " + method.getSignature());
+                            System.out.println("Sink Call: " + methodSig);
+                            System.out.println("Tainted Argument: " + local);
+                            System.out.println("======================");
+                        }
+                    }
+                }
+            }
+
+            // ==========================================
+            // 4. STATE UPDATE
+            // ==========================================
+            if (!state.getTaintedLocals().equals(newState.getTaintedLocals())) {
+                state = newState;
+                changed = true;
+            }
+
+            // ==========================================
+            // 5. RETURN TAINT
+            // ==========================================
+            if (stmtWrapper.isReturnStatement()) {
+
+                var ret = stmtWrapper.getReturnedLocal();
+
+                if (ret != null && state.isTainted(ret)
+                        && !summary.returnsTainted) {
+
+                    summary.returnsTainted = true;
+                    changed = true;
+                }
+            }
+        }
+
+    } while (changed);
+
+    return summary.returnsTainted;
+}
+
     // ============================================================
 
     private boolean isReachable(
@@ -148,8 +203,7 @@ public class InterProceduralAnalyzer {
             String target,
             CallGraphModel cg) {
 
-        if (entry.equals(target))
-            return true;
+        if (entry.equals(target)) return true;
 
         Set<String> visited = new HashSet<>();
         return dfs(entry, target, cg, visited);
@@ -161,23 +215,18 @@ public class InterProceduralAnalyzer {
             CallGraphModel cg,
             Set<String> visited) {
 
-        if (current.equals(target))
-            return true;
+        if (current.equals(target)) return true;
 
-        if (!visited.add(current))
-            return false;
+        if (visited.contains(current)) return false;
+        visited.add(current);
 
         for (String callee : cg.getCallees(current)) {
-
-            if (dfs(callee, target, cg, visited))
-                return true;
+            if (dfs(callee, target, cg, visited)) return true;
         }
 
         return false;
     }
 
-    // ============================================================
-    // Utility
     // ============================================================
 
     private boolean methodExists(
