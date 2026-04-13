@@ -19,8 +19,8 @@ public class TestTaintAnalysis {
     public static void main(String[] args) {
 
         // CHANGE THESE PATHS
-        String androidPlatforms = "C:/Android/platforms";
-        String apkPath = "E:/college/BEIT/android-privacy-taint/src/main/resources/backflash.apk";
+        String androidPlatforms = "C:/Users/isubh/AppData/Local/Android/Sdk/platforms";
+        String apkPath = "C:/sandbox/backflash/backflash.apk";
 
         System.out.println("[+] Initializing Soot");
         SootSetup.init(androidPlatforms, apkPath);

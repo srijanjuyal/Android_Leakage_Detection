@@ -13,12 +13,15 @@ public class TaintTransfer {
         boolean changed = false;
         var sootStmt = stmt.getSootStmt();
 
-        // Assignment: x = y
+        // ============================
+        // Assignment: x = y OR x = foo()
+        // ============================
         if (sootStmt instanceof AssignStmt as) {
 
             Value left = as.getLeftOp();
             Value right = as.getRightOp();
 
+            // Case 1: x = y
             if (left instanceof Local l && right instanceof Local r) {
                 if (in.isTainted(r) && !out.isTainted(l)) {
                     out.taint(l);
@@ -26,24 +29,48 @@ public class TaintTransfer {
                 }
             }
 
-            // SOURCE: x = source()
-            if (SourceSinkManager.isSource(sootStmt) && left instanceof Local l) {
-                if (!out.isTainted(l)) {
-                    out.taint(l);
-                    changed = true;
+            // Case 2: x = source()
+            if (right instanceof InvokeExpr ie && left instanceof Local l) {
+
+                // Source detection
+                if (SourceSinkManager.isSource(sootStmt)) {
+                    if (!out.isTainted(l)) {
+                        out.taint(l);
+                        changed = true;
+                    }
+                }
+
+                // 🔥 NEW: Return taint propagation
+                String methodSig = ie.getMethod().getSignature();
+
+                MethodTaintSummary summary =
+                        InterProceduralContext.getSummary(methodSig);
+
+                if (summary != null && summary.returnsTainted) {
+                    if (!out.isTainted(l)) {
+                        out.taint(l);
+                        changed = true;
+                    }
                 }
             }
         }
 
-        // Method invocation
+        // ============================
+        // Method invocation (SINK)
+        // ============================
         if (sootStmt.containsInvokeExpr()) {
+
             InvokeExpr ie = sootStmt.getInvokeExpr();
 
-            // SINK detection
             if (SourceSinkManager.isSink(sootStmt)) {
+
                 for (Value arg : ie.getArgs()) {
-                    if (arg instanceof Local l && in.isTainted(l)) {
-                        System.out.println("🔥 LEAK DETECTED at: " + stmt);
+
+                    if (arg instanceof Local l &&
+                            (in.isTainted(l) || out.isTainted(l))) {
+
+                        System.out.println(" LEAK DETECTED at: " + stmt);
+                        System.out.println("   Tainted variable: " + l);
                     }
                 }
             }
