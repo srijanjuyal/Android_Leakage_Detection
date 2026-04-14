@@ -51,52 +51,61 @@ public class SourceSpec {
     // ==========================================
     public static boolean isSourceMethodSignature(String sig) {
 
-        if (sig == null) return false;
+    if (sig == null) return false;
 
-        // ✅ Exact match
-        if (SOURCE_METHODS.contains(sig)) return true;
+    // ==========================================
+    // 1. EXACT MATCH (MOST RELIABLE)
+    // ==========================================
+    if (SOURCE_METHODS.contains(sig)) return true;
 
-        // =========================
-        // STANDARD ANDROID SOURCES
-        // =========================
-        if (sig.contains("TelephonyManager") &&
-                (sig.contains("getDeviceId") ||
-                 sig.contains("getSubscriberId") ||
-                 sig.contains("getLine1Number") ||
-                 sig.contains("getImei"))) {
-            return true;
-        }
+    // ==========================================
+    // 2. CONTROLLED PATTERN MATCHING (SAFE)
+    // ==========================================
 
-        if (sig.contains("Location") &&
-                (sig.contains("getLatitude") ||
-                 sig.contains("getLongitude") ||
-                 sig.contains("getLastKnownLocation"))) {
-            return true;
-        }
+    // DEVICE IDENTIFIERS
+    if (sig.contains("TelephonyManager") &&
+        (sig.contains("getDeviceId") ||
+         sig.contains("getSubscriberId") ||
+         sig.contains("getLine1Number") ||
+         sig.contains("getImei"))) {
+        return true;
+    }
 
-        if (sig.contains("ContentResolver") &&
-                sig.contains("query")) {
-            return true;
-        }
+    // LOCATION (ONLY DATA ACCESS, NOT REGISTRATION APIs)
+    if (sig.contains("android.location.Location") &&
+        (sig.contains("getLatitude") ||
+         sig.contains("getLongitude"))) {
+        return true;
+    }
 
-        // =========================
-        // 🔥 MALWARE / CUSTOM SOURCES
-        // =========================
-        if (sig.contains("readConfig") ||
-            sig.contains("getDevice") ||
-            sig.contains("getData") ||
-            sig.contains("loadData")) {
-            return true;
-        }
+    if (sig.contains("LocationManager") &&
+        sig.contains("getLastKnownLocation")) {
+        return true;
+    }
 
-        // Broad Android sensitive APIs
-        if (sig.contains("android.telephony") ||
-            sig.contains("android.location") ||
-            sig.contains("android.accounts") ||
-            sig.contains("android.net")) {
-            return true;
-        }
+    // CONTENT RESOLVER (CONTACTS ETC.)
+    if (sig.contains("ContentResolver") &&
+        sig.contains("query")) {
+        return true;
+    }
 
-        return false;
+    // ==========================================
+    // 3. CUSTOM / MALWARE SOURCES (OPTIONAL)
+    // ==========================================
+    if (sig.contains("readConfig") ||
+        sig.contains("getDevice") ||
+        sig.contains("getData") ||
+        sig.contains("loadData")) {
+        return true;
+    }
+
+    // ==========================================
+    // 🚫 REMOVE ALL BROAD MATCHING
+    // ==========================================
+    // ❌ NO sig.contains("android.location")
+    // ❌ NO sig.contains("android.telephony")
+    // ❌ NO sig.contains("android.net")
+
+    return false;
     }
 }

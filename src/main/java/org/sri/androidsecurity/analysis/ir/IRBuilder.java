@@ -21,15 +21,16 @@ public class IRBuilder {
 
                 Body body = method.retrieveActiveBody();
 
-                // This is REAL IR
                 System.out.println("Method: " + method.getSignature());
 
-                // Build Statement list
+                // ==========================================
+                // 1. BUILD STATEMENTS
+                // ==========================================
                 List<Statement> statements = new ArrayList<>();
                 Map<Unit, Statement> unitToStmt = new HashMap<>();
 
                 for (Unit unit : body.getUnits()) {
-//                    System.out.println("  " + unit);
+
                     if (!(unit instanceof Stmt sootStmt)) continue;
 
                     Statement stmt = new Statement(sootStmt);
@@ -37,26 +38,44 @@ public class IRBuilder {
                     unitToStmt.put(unit, stmt);
                 }
 
-                // Build CFG (your abstraction)
+                // ==========================================
+                // 2. BUILD CFG
+                // ==========================================
                 CFG cfg = buildCFG(body, unitToStmt);
 
-//                System.out.println("CFG edges:");
-//                for (Unit u : cfg) {
-//                    for (Unit succ : cfg.getSuccsOf(u)) {
-//                        System.out.println("  " + u + " --> " + succ);
-//                    }
-//                }
+                // ==========================================
+                // 🔥 3. EXTRACT PARAMETERS (CRITICAL FIX)
+                // ==========================================
+                List<String> params = new ArrayList<>();
+
+                if (!method.isStatic()) {
+                    params.add("this"); // or actual local name
+                }
+
+                for (Local param : body.getParameterLocals()) {
+                    params.add(param.getName());
+                }
+
+                // ==========================================
+                // 4. BUILD METHOD IR
+                // ==========================================
                 MethodIR methodIR = new MethodIR(
                         method.getSignature(),
                         statements,
                         cfg
                 );
 
+                // 🔥 SET PARAMETERS
+                methodIR.setParameters(params);
+
                 methods.add(methodIR);
             }
         }
+
         return new ProgramModel(methods);
     }
+
+    // ============================================================
 
     private static CFG buildCFG(
             Body body,
@@ -80,7 +99,7 @@ public class IRBuilder {
             }
         }
 
-        // Set entry node
+        // Entry node
         if (!sootCFG.getHeads().isEmpty()) {
             Unit head = sootCFG.getHeads().get(0);
             Statement entry = unitToStmt.get(head);

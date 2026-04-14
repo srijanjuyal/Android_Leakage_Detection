@@ -11,12 +11,18 @@ import org.sri.androidsecurity.analysis.ir.SootSetup;
 import org.sri.androidsecurity.analysis.taint.InterProceduralAnalyzer;
 import org.sri.androidsecurity.analysis.taint.MethodTaintSummary;
 
+// 🔥 ADD THIS IMPORT
+import org.sri.androidsecurity.analysis.taint.TaintAnalysisResult;
+
 import java.util.Map;
 import java.util.Set;
 
 public class TestTaintAnalysis {
 
     public static void main(String[] args) {
+
+        // RESET BEFORE RUN
+        TaintAnalysisResult.reset();
 
         // CHANGE THESE PATHS
         String androidPlatforms = "C:/Users/isubh/AppData/Local/Android/Sdk/platforms";
@@ -32,6 +38,8 @@ public class TestTaintAnalysis {
         System.out.println("[+] Resolving Entry Points");
         Set<String> entryPoints =
                 EntryPointResolver.resolveEntryPoints(apkInfo);
+
+        entryPoints.add("<de.ecspride.LocationLeak1$MyLocationListener: void onLocationChanged(android.location.Location)>");
 
         System.out.println("[+] Building Program Model");
         ProgramModel programModel = IRBuilder.buildProgramModel();
@@ -62,6 +70,20 @@ public class TestTaintAnalysis {
                         "[TAINTED RETURN] " + methodSig
                 );
             }
+        }
+
+        // ==========================================
+        // 🔥 FINAL VERDICT (ADD THIS BLOCK)
+        // ==========================================
+
+        System.out.println("\n=================================");
+        System.out.println("🔍 FINAL SECURITY RESULT");
+        System.out.println("=================================");
+
+        if (TaintAnalysisResult.isLeakFound()) {
+            System.out.println("❌ APK STATUS: UNSAFE (Data Leak Detected)");
+        } else {
+            System.out.println("✅ APK STATUS: SAFE (No Data Leak Found)");
         }
 
         System.out.println("\n[✓] Done.");
