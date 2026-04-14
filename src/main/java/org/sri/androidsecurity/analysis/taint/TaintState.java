@@ -1,33 +1,31 @@
 package org.sri.androidsecurity.analysis.taint;
 
-import soot.Local;
-
 import java.util.HashSet;
 import java.util.Set;
 
 public class TaintState {
 
-    private final Set<Local> taintedLocals = new HashSet<>();
+    private final Set<String> taintedLocals = new HashSet<>();
 
-    public boolean isTainted(Local l) {
-        return taintedLocals.contains(l);
+    public boolean isTainted(String var) {
+        return taintedLocals.contains(var);
     }
 
-    public void taint(Local l) {
-        taintedLocals.add(l);
+    public void addTainted(String var) {
+        taintedLocals.add(var);
     }
 
-    public void taintAll(Set<Local> locals) {
-        taintedLocals.addAll(locals);
+    public void addAll(Set<String> vars) {
+        taintedLocals.addAll(vars);
     }
 
-    public Set<Local> getTaintedLocals() {
+    public Set<String> getTaintedLocals() {
         return taintedLocals;
     }
 
     public TaintState copy() {
         TaintState copy = new TaintState();
-        copy.taintAll(this.taintedLocals);
+        copy.addAll(this.taintedLocals);
         return copy;
     }
 

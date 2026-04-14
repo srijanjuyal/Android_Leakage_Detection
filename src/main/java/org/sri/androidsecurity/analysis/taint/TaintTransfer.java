@@ -1,77 +1,87 @@
 package org.sri.androidsecurity.analysis.taint;
 
 import org.sri.androidsecurity.analysis.ir.Statement;
-import org.sri.androidsecurity.analysis.rules.SourceSinkManager;
-import soot.Local;
-import soot.Value;
-import soot.jimple.*;
 
 public class TaintTransfer {
 
     public static boolean apply(Statement stmt, TaintState in, TaintState out) {
 
         boolean changed = false;
-        var sootStmt = stmt.getSootStmt();
 
-        // ============================
-        // Assignment: x = y OR x = foo()
-        // ============================
-        if (sootStmt instanceof AssignStmt as) {
+        String left = stmt.getDefinedLocal();
 
-            Value left = as.getLeftOp();
-            Value right = as.getRightOp();
+        // ==========================================
+        // 1. NORMAL ASSIGNMENT: x = y
+        // ==========================================
+        if (left != null) {
 
-            // Case 1: x = y
-            if (left instanceof Local l && right instanceof Local r) {
-                if (in.isTainted(r) && !out.isTainted(l)) {
-                    out.taint(l);
-                    changed = true;
-                }
-            }
+            for (String used : stmt.getUsedLocals()) {
 
-            // Case 2: x = source()
-            if (right instanceof InvokeExpr ie && left instanceof Local l) {
+                if (in.isTainted(used)) {
 
-                // Source detection
-                if (SourceSinkManager.isSource(sootStmt)) {
-                    if (!out.isTainted(l)) {
-                        out.taint(l);
-                        changed = true;
-                    }
-                }
-
-                // 🔥 NEW: Return taint propagation
-                String methodSig = ie.getMethod().getSignature();
-
-                MethodTaintSummary summary =
-                        InterProceduralContext.getSummary(methodSig);
-
-                if (summary != null && summary.returnsTainted) {
-                    if (!out.isTainted(l)) {
-                        out.taint(l);
+                    // Propagate taint to LHS
+                    if (!out.isTainted(left)) {
+                        out.addTainted(left);
                         changed = true;
                     }
                 }
             }
         }
 
-        // ============================
-        // Method invocation (SINK)
-        // ============================
-        if (sootStmt.containsInvokeExpr()) {
+        // ==========================================
+        // 2. METHOD CALL HANDLING (CORE LOGIC)
+        // ==========================================
+        if (stmt.isInvoke()) {
 
-            InvokeExpr ie = sootStmt.getInvokeExpr();
+            String methodSig = stmt.getInvokeMethodSignature();
 
-            if (SourceSinkManager.isSink(sootStmt)) {
+            boolean anyArgTainted = false;
 
-                for (Value arg : ie.getArgs()) {
+            for (String arg : stmt.getUsedLocals()) {
+                if (in.isTainted(arg)) {
+                    anyArgTainted = true;
+                    break;
+                }
+            }
 
-                    if (arg instanceof Local l &&
-                            (in.isTainted(l) || out.isTainted(l))) {
+            // ==========================================
+            // 2A. ARG → RETURN FLOW (x = foo(tainted))
+            // ==========================================
+            if (anyArgTainted && left != null) {
 
-                        System.out.println(" LEAK DETECTED at: " + stmt);
-                        System.out.println("   Tainted variable: " + l);
+                if (!out.isTainted(left)) {
+                    out.addTainted(left);
+                    changed = true;
+                }
+            }
+
+            // ==========================================
+            // 2B. VOID METHOD PROPAGATION (🔥 CRITICAL FIX)
+            // Handles cases like:
+            // access$0(obj, taintedData)
+            // ==========================================
+            if (anyArgTainted && left == null) {
+
+                for (String arg : stmt.getUsedLocals()) {
+
+                    if (!out.isTainted(arg)) {
+                        out.addTainted(arg);
+                        changed = true;
                     }
+                }
+            }
+
+            // ==========================================
+            // 2C. INTERPROCEDURAL RETURN FLOW
+            // ==========================================
+            MethodTaintSummary summary =
+                    InterProceduralContext.getSummary(methodSig);
+
+            if (summary != null && summary.returnsTainted && left != null) {
+
+                if (!out.isTainted(left)) {
+                    out.addTainted(left);
+                    changed = true;
                 }
             }
         }
