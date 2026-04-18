@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>APK Taint Analyzer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com"/>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+    <style>
+        /* ── Reset & Base ─────────────────────────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:        #07090f;
+            --surface:   #0d1017;
+            --border:    #1a2233;
+            --accent:    #00e5ff;
+            --accent2:   #ff3c6e;
+            --safe:      #00ff87;
+            --unsafe:    #ff3c6e;
+            --text:      #c8d6e8;
+            --muted:     #4a5a72;
+            --mono:      'Share Tech Mono', monospace;
+            --sans:      'Syne', sans-serif;
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            height: 100vh; /* Lock body height to window */
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* Prevent page-level scrolling */
+        }
+
+        /* ── Scanline overlay ─────────────────────────────────────────────── */
+        body::after {
+            content: '';
+            position: fixed; inset: 0;
+            background: repeating-linear-gradient(
+                    0deg,
+                    transparent,
+                    transparent 2px,
+                    rgba(0,0,0,.18) 2px,
+                    rgba(0,0,0,.18) 4px
+            );
+            pointer-events: none;
+            z-index: 999;
+        }
+
+        /* ── Header ───────────────────────────────────────────────────────── */
+        header {
+            display: flex; align-items: center; gap: 1rem;
+            padding: 1.2rem 2.5rem;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(90deg, #0d1017 0%, #091320 100%);
+            flex-wrap: wrap;
+        }
+        .logo-icon {
+            width: 38px; height: 38px;
+            background: var(--accent);
+            clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+            display: grid; place-items: center;
+            font-size: .75rem; color: #000; font-weight: 800;
+        }
+        .logo-text { font-size: 1.2rem; font-weight: 800; letter-spacing: .08em; }
+        .logo-text span { color: var(--accent); }
+        .tagline { font-family: var(--mono); font-size: .7rem; color: var(--muted); margin-left: auto; }
+
+        /* ── Main layout ──────────────────────────────────────────────────── */
+        main {
+            max-width: 1100px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            flex: 1; /* Take up remaining height */
+            gap: 1.5rem;
+            overflow: hidden; /* Keep contents inside */
+        }
+
+        /* ── Upload zone ──────────────────────────────────────────────────── */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            padding: 3.5rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color .25s, background .25s;
+            position: relative;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .upload-zone::before {
+            content: '';
+            position: absolute; inset: 0;
+            background: radial-gradient(ellipse at 50% 100%, rgba(0,229,255,.04) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .upload-zone:hover, .upload-zone.drag-over {
+            border-color: var(--accent);
+            background: rgba(0,229,255,.03);
+        }
+        .upload-zone input[type=file] {
+            position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%;
+        }
+        .upload-icon {
+            font-size: 3rem; margin-bottom: 1rem;
+            filter: drop-shadow(0 0 12px var(--accent));
+        }
+        .upload-zone h2 { font-size: 1.5rem; font-weight: 800; margin-bottom: .4rem; }
+        .upload-zone p  { color: var(--muted); font-family: var(--mono); font-size: .82rem; }
+        .file-chosen {
+            display: none;
+            margin-top: 1rem;
+            padding: .5rem 1.2rem;
+            background: rgba(0,229,255,.08);
+            border: 1px solid var(--accent);
+            border-radius: 6px;
+            font-family: var(--mono);
+            font-size: .82rem;
+            color: var(--accent);
+            /* CHANGE TO THIS: */
+            align-items: center;
+            gap: .5rem;
+            max-width: 100%;
+        }
+        /* ADD THIS NEW RULE: */
+        #file-name {
+            overflow: hidden;
+            white-space: nowrap;
+            text-overflow: ellipsis;
+        }
+
+        /* ── Scan button ──────────────────────────────────────────────────── */
+        .btn-scan {
+            width: 100%;
+            padding: 1rem;
+            background: var(--accent);
+            color: #000;
+            font-family: var(--sans);
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: .1em;
+            text-transform: uppercase;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: opacity .2s, transform .1s;
+            display: flex; align-items: center; justify-content: center; gap: .6rem;
+            flex-shrink: 0;
+        }
+        .btn-scan:disabled { opacity: .35; cursor: not-allowed; }
+        .btn-scan:not(:disabled):hover { transform: translateY(-1px); }
+
+        /* ── Progress bar ─────────────────────────────────────────────────── */
+        .progress-bar-wrap {
+            height: 3px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+            display: none;
+            flex-shrink: 0;
+        }
+        .progress-bar-wrap.active { display: block; }
+        .progress-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--accent), #a855f7);
+            border-radius: 2px;
+            transition: width .4s ease;
+            animation: pulse-bar 1.5s ease-in-out infinite;
+        }
+        @keyframes pulse-bar { 0%,100%{opacity:1} 50%{opacity:.6} }
+
+        /* ── Terminal / output ────────────────────────────────────────────── */
+        .terminal-wrap { display: none; flex-shrink: 1; }
+        .terminal-wrap.visible {
+            display: flex;
+            flex-direction: column;
+            flex: 1; /* Allow terminal to grow */
+            min-height: 0; /* Important so inner content can scroll */
+        }
+        .terminal-header {
+            display: flex; align-items: center; gap: .6rem;
+            padding: .6rem 1rem;
+            background: #0a0e17;
+            border: 1px solid var(--border);
+            border-bottom: none;
+            border-radius: 8px 8px 0 0;
+            flex-shrink: 0;
+        }
+        .terminal-title { font-family: var(--mono); font-size: .75rem; color: var(--muted); margin-left: .5rem; }
+        .copy-btn {
+            margin-left: auto;
+            padding: .25rem .7rem;
+            font-family: var(--mono);
+            font-size: .7rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: color .2s, border-color .2s;
+        }
+        .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+        #terminal {
+            background: #050709;
+            border: 1px solid var(--border);
+            border-radius: 0 0 8px 8px;
+            padding: 1.2rem 1.4rem;
+            font-family: var(--mono);
+            font-size: .82rem;
+            line-height: 1.75;
+            flex: 1; /* Take up all available height in terminal wrap */
+            overflow-y: auto;
+            overflow-x: hidden; /* Hide horizontal scroll */
+            white-space: pre-wrap; /* Preserve formatting but wrap */
+            word-break: break-all; /* Force long strings to wrap */
+            word-wrap: break-word;
+            scroll-behavior: smooth;
+        }
+        #terminal::-webkit-scrollbar { width: 6px; }
+        #terminal::-webkit-scrollbar-track { background: transparent; }
+        #terminal::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+        .log-line { display: inline; animation: fadein .15s ease; }
+        @keyframes fadein { from { opacity:0; transform: translateY(3px); } to { opacity:1; transform:none; } }
+        .log-line.info    { color: var(--text); }
+        .log-line.step    { color: var(--accent); }
+        .log-line.tainted { color: #ffa600; }
+        .log-line.divider { color: var(--muted); }
+        .log-line.safe    { color: var(--safe);   font-weight: 700; font-size: .9rem; }
+        .log-line.danger  { color: var(--unsafe); font-weight: 700; font-size: .9rem; }
+        .log-line.done    { color: #a78bfa; }
+        .log-line.error   { color: var(--unsafe); }
+
+        .cursor {
+            display: inline-block; width: 9px; height: 1.1em;
+            background: var(--accent); vertical-align: middle;
+            animation: blink 1s steps(1) infinite;
+        }
+        @keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+
+        /* ── Verdict card ─────────────────────────────────────────────────── */
+        #verdict-card {
+            display: none;
+            border-radius: 12px;
+            padding: 1.5rem 2.5rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        #verdict-card.safe {
+            background: rgba(0,255,135,.06);
+            border: 1px solid rgba(0,255,135,.35);
+            display: block;
+        }
+        #verdict-card.unsafe {
+            background: rgba(255,60,110,.06);
+            border: 1px solid rgba(255,60,110,.35);
+            display: block;
+        }
+        #verdict-card::after {
+            content: '';
+            position: absolute; inset: 0;
+            background: radial-gradient(ellipse at 50% 0%, currentColor 0%, transparent 60%);
+            opacity: .04; pointer-events: none;
+        }
+        .verdict-icon { font-size: 2.5rem; margin-bottom: .5rem; }
+        .verdict-label { font-size: 1.5rem; font-weight: 800; letter-spacing: .08em; }
+        #verdict-card.safe   .verdict-label { color: var(--safe); }
+        #verdict-card.unsafe .verdict-label { color: var(--unsafe); }
+        .verdict-sub { margin-top: .4rem; font-family: var(--mono); font-size: .82rem; color: var(--muted); }
+
+        /* ── Stats strip ──────────────────────────────────────────────────── */
+        #stats-strip { display: none; flex-shrink: 0; }
+        #stats-strip.visible {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: .8rem 1.2rem;
+        }
+        .stat-label { font-family: var(--mono); font-size: .7rem; color: var(--muted); margin-bottom: .3rem; }
+        .stat-value { font-size: 1.2rem; font-weight: 800; color: var(--accent); }
+
+        /* ── Reset link ───────────────────────────────────────────────────── */
+        #reset-btn {
+            display: none;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            padding: .6rem 1.4rem;
+            border-radius: 6px;
+            font-family: var(--mono);
+            font-size: .8rem;
+            cursor: pointer;
+            transition: color .2s, border-color .2s;
+            width: fit-content; margin: 0 auto;
+            flex-shrink: 0;
+        }
+        #reset-btn:hover { color: var(--text); border-color: var(--text); }
+        #reset-btn.visible { display: block; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo-icon">◈</div>
+    <span class="logo-text">APK <span>Taint</span> Analyzer</span>
+    <span class="tagline">// static analysis · data-leak detection</span>
+</header>
+
+<main>
+
+    <div class="upload-zone" id="dropzone">
+        <input type="file" id="apk-input" accept=".apk"/>
+        <div class="upload-icon">⬡</div>
+        <h2>Drop your APK here</h2>
+        <p>or click to browse · .apk files only · up to 200 MB</p>
+        <div id="file-chosen" class="file-chosen" style="display:none">
+            <span>📦</span><span id="file-name"></span>
+        </div>
+    </div>
+
+    <div class="progress-bar-wrap" id="progress-wrap">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+    </div>
+
+    <button class="btn-scan" id="scan-btn" disabled>
+        <span>⬡</span> Scan APK
+    </button>
+
+    <div id="stats-strip">
+        <div class="stat-card">
+            <div class="stat-label">// file</div>
+            <div class="stat-value" id="stat-file" style="font-size:.95rem;word-break:break-all">—</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">// tainted methods</div>
+            <div class="stat-value" id="stat-tainted">—</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">// log lines</div>
+            <div class="stat-value" id="stat-lines">0</div>
+        </div>
+    </div>
+
+    <div class="terminal-wrap" id="terminal-wrap">
+        <div class="terminal-header">
+            <span class="terminal-title">Analysis Output</span>
+            <button class="copy-btn" id="copy-btn">copy log</button>
+        </div>
+        <div id="terminal"><span class="cursor"></span></div>
+    </div>
+
+    <div id="verdict-card">
+        <div class="verdict-icon" id="verdict-icon"></div>
+        <div class="verdict-label" id="verdict-label"></div>
+        <div class="verdict-sub" id="verdict-sub"></div>
+    </div>
+
+    <button id="reset-btn">↺ Analyze another APK</button>
+
+</main>
+
+<script>
+    // ── Configuration ─────────────────────────────────────────────────────────
+    const API_BASE = 'http://localhost:8080/api/analyze';
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    let selectedFile = null;
+    let logLines = [];
+    let taintedCount = 0;
+    let lineCount = 0;
+    let progressInterval = null;
+
+    // ── DOM refs ──────────────────────────────────────────────────────────────
+    const dropzone     = document.getElementById('dropzone');
+    const apkInput     = document.getElementById('apk-input');
+    const fileChosen   = document.getElementById('file-chosen');
+    const fileName     = document.getElementById('file-name');
+    const scanBtn      = document.getElementById('scan-btn');
+    const progressWrap = document.getElementById('progress-wrap');
+    const progressFill = document.getElementById('progress-fill');
+    const termWrap     = document.getElementById('terminal-wrap');
+    const terminal     = document.getElementById('terminal');
+    const verdictCard  = document.getElementById('verdict-card');
+    const statsStrip   = document.getElementById('stats-strip');
+    const resetBtn     = document.getElementById('reset-btn');
+    const copyBtn      = document.getElementById('copy-btn');
+
+    // ── File selection ─────────────────────────────────────────────────────────
+    apkInput.addEventListener('change', () => {
+        const f = apkInput.files[0];
+        if (!f) return;
+        selectFile(f);
+    });
+
+    dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag-over'); });
+    dropzone.addEventListener('dragleave',  () => dropzone.classList.remove('drag-over'));
+    dropzone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropzone.classList.remove('drag-over');
+        const f = e.dataTransfer.files[0];
+        if (f && f.name.endsWith('.apk')) selectFile(f);
+    });
+
+    function selectFile(f) {
+        selectedFile = f;
+        fileName.textContent = f.name + '  (' + (f.size / 1024 / 1024).toFixed(2) + ' MB)';
+        fileChosen.style.display = 'inline-flex';
+        scanBtn.disabled = false;
+    }
+
+    // ── Scan ──────────────────────────────────────────────────────────────────
+    scanBtn.addEventListener('click', async () => {
+        if (!selectedFile) return;
+        startScan();
+        try {
+            const jobId = await uploadApk(selectedFile);
+            streamResults(jobId);
+        } catch (err) {
+            appendLine('[ERROR] Upload failed: ' + err.message, 'error');
+            finishScan();
+        }
+    });
+
+    async function uploadApk(file) {
+        const fd = new FormData();
+        fd.append('apk', file);
+        const res = await fetch(API_BASE, { method: 'POST', body: fd });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(body.error || res.statusText);
+        }
+        const { jobId } = await res.json();
+        return jobId;
+    }
+
+    function streamResults(jobId) {
+        const evtSrc = new EventSource(`${API_BASE}/${jobId}/stream`);
+
+        evtSrc.addEventListener('log', e => {
+            appendLine(e.data, classifyLine(e.data));
+        });
+
+        evtSrc.addEventListener('verdict', e => {
+            evtSrc.close();
+            showVerdict(e.data === 'UNSAFE');
+            finishScan();
+        });
+
+        evtSrc.addEventListener('error', e => {
+            // Connection error after stream ends is normal
+            if (evtSrc.readyState === EventSource.CLOSED) return;
+            appendLine('[ERROR] Connection lost. Check server.', 'error');
+            evtSrc.close();
+            finishScan();
+        });
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────────────
+    function startScan() {
+        logLines = []; taintedCount = 0; lineCount = 0;
+
+        // Hide upload components to make room for terminal
+        dropzone.style.display = 'none';
+        scanBtn.style.display = 'none';
+
+        terminal.innerHTML = '<span class="cursor"></span>';
+        termWrap.classList.add('visible');
+        verdictCard.className = '';
+        verdictCard.style.display = 'none';
+        resetBtn.classList.remove('visible');
+        progressWrap.classList.add('active');
+        statsStrip.classList.add('visible');
+        document.getElementById('stat-file').textContent = selectedFile.name;
+        document.getElementById('stat-tainted').textContent = '0';
+        document.getElementById('stat-lines').textContent = '0';
+
+        // Fake progress (real progress is unknown)
+        let p = 2;
+        progressFill.style.width = p + '%';
+        progressInterval = setInterval(() => {
+            p = Math.min(p + Math.random() * 3, 88);
+            progressFill.style.width = p + '%';
+        }, 800);
+    }
+
+    function finishScan() {
+        clearInterval(progressInterval);
+        progressFill.style.width = '100%';
+        setTimeout(() => progressWrap.classList.remove('active'), 600);
+        resetBtn.classList.add('visible');
+    }
+
+    function classifyLine(line) {
+        if (line.startsWith('[+]'))                 return 'step';
+        if (line.includes('[TAINTED RETURN]'))      { taintedCount++; document.getElementById('stat-tainted').textContent = taintedCount; return 'tainted'; }
+        if (line.includes('UNSAFE'))                return 'danger';
+        if (line.includes('SAFE'))                  return 'safe';
+        if (line.includes('===') || line.includes('---')) return 'divider';
+        if (line.includes('[✓]') || line.includes('Done')) return 'done';
+        if (line.startsWith('[ERROR]'))             return 'error';
+        return 'info';
+    }
+
+    function appendLine(text, cls = 'info') {
+        logLines.push(text);
+        lineCount++;
+        document.getElementById('stat-lines').textContent = lineCount;
+
+        // Remove cursor, add line, re-add cursor
+        const cursor = terminal.querySelector('.cursor');
+        if (cursor) cursor.remove();
+        const span = document.createElement('span');
+        span.className = 'log-line ' + cls;
+        span.textContent = text;
+        terminal.appendChild(span);
+        terminal.appendChild(document.createTextNode('\n'));
+        const newCursor = document.createElement('span');
+        newCursor.className = 'cursor';
+        terminal.appendChild(newCursor);
+        terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    function showVerdict(isUnsafe) {
+        verdictCard.className = isUnsafe ? 'unsafe' : 'safe';
+        verdictCard.style.display = 'block';
+        document.getElementById('verdict-icon').textContent  = isUnsafe ? '🔴' : '🟢';
+        document.getElementById('verdict-label').textContent = isUnsafe ? 'UNSAFE — DATA LEAK DETECTED' : 'SAFE — NO LEAKS FOUND';
+        document.getElementById('verdict-sub').textContent   = isUnsafe
+            ? 'This APK transmits sensitive data to external sinks.'
+            : 'Static analysis found no data-leak paths in this APK.';
+    }
+
+    // ── Copy log ───────────────────────────────────────────────────────────────
+    copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(logLines.join('\n')).then(() => {
+            copyBtn.textContent = '✓ copied!';
+            setTimeout(() => copyBtn.textContent = 'copy log', 2000);
+        });
+    });
+
+    // ── Reset ─────────────────────────────────────────────────────────────────
+    resetBtn.addEventListener('click', () => {
+        selectedFile = null;
+        apkInput.value = '';
+        fileChosen.style.display = 'none';
+        scanBtn.disabled = true;
+
+        // Bring back the upload components
+        dropzone.style.display = 'block';
+        scanBtn.style.display = 'flex';
+
+        terminal.innerHTML = '<span class="cursor"></span>';
+        termWrap.classList.remove('visible');
+        verdictCard.className = '';
+        verdictCard.style.display = 'none';
+        statsStrip.classList.remove('visible');
+        resetBtn.classList.remove('visible');
+        logLines = []; taintedCount = 0; lineCount = 0;
+        progressFill.style.width = '0%';
+    });
+</script>
+</body>
+</html>

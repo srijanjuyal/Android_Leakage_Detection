@@ -25,8 +25,9 @@ public class TestTaintAnalysis {
         TaintAnalysisResult.reset();
 
         // CHANGE THESE PATHS
-        String androidPlatforms = "C:/Users/isubh/AppData/Local/Android/Sdk/platforms";
-        String apkPath = "C:/sandbox/backflash/backflash.apk";
+        String androidPlatforms = "C:/Android/platforms";
+        String apkRootPath = "E:/college/BEIT/android-privacy-taint/src/main/resources/";
+        String apkPath = apkRootPath + "paytm.apk";
 
         System.out.println("[+] Initializing Soot");
         SootSetup.init(androidPlatforms, apkPath);
